@@ -35,7 +35,6 @@ MANIFEST
 .idea/
 .DS_Store
 football-players-detection-8/
-data/
 
 # Installer logs
 pip-log.txt
