@@ -1,0 +1,135 @@
+import os, six, urllib3, datetime, re, requests
+import pandas as pd
+from bs4 import BeautifulSoup
+
+
+def fetch_content(url: str) -> str:
+    """Fetch the HTML content from the URL."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:102.0) ' 'Gecko/20100101 Firefox/102.0',
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.content.decode('utf-8')
+
+
+def get_raw_data(url: str, year=None):
+    page_content = fetch_content('https://kenpom.com/index.php?y={}'.format(year))
+    soup = BeautifulSoup(page_content, features='html.parser')
+    target_table = soup.find('table', {'id': 'ratings-table'})
+    return target_table
+    
+
+def load_kenpom_dataframe(year=None, csv_file_path=None):
+    """
+    Creates a pandas dataframe from the kenpom website to be used
+    for analysis. Can also create and save a csv file from the
+    dataframe.
+
+    Args:
+        year(int): The year to get stats from
+        csv_file_path(String): File path for the output .csv file.
+                               If None, then no csv file is saved.
+
+    Raises:
+        AssertionError: If 'year' is not of type integer.
+        AssertionError: If `csv_file_path` is not of type string.
+
+    Example:
+        >>> load_kenpom_dataframe(year=2018, csv_file_path='path/to/file.csv')
+    """
+
+    # Check that the path is a string
+    if csv_file_path is not None:
+        if not isinstance(csv_file_path, six.string_types):
+            raise AssertionError('Output file path must be a string.')
+
+    # Check that the year is an int
+    if year is not None:
+        if not isinstance(year, int):
+            raise AssertionError('Year must be an integer.')
+    # Load default values if none given
+    else:
+        year = datetime.datetime.now().year
+
+    # Get the webpage html
+    target_table = get_raw_data('https://kenpom.com/index.php?y={}'.format(year))
+
+    # Get the column names from the header
+    table_header = target_table.find('thead').find_all('tr')[1]
+    column_headers = [th.get_text() for th in table_header.find_all('th')]
+    cols = []
+    for i, header in enumerate(column_headers):
+        header = header.strip()
+
+        # Fix some column names
+        if header == 'Rk':
+            header = 'Rank'
+        elif header == 'Team':
+            cols.append('Team')
+            header = 'Seed'
+        elif header == 'W-L':
+            cols.append('Wins')
+            header = 'Losses'
+        elif i > 11:
+            header = 'NCSOS {}'.format(header)
+        elif i > 8 and 'Opp' not in header:
+            header = 'Opp{}'.format(header)
+
+        # Add the header to the list
+        cols.append(header)
+
+        # Add the team rank columns
+        if i > 4:
+            cols.append('{} Rank'.format(header))
+
+    # Iterate through rows to get data
+    data_array = []
+    table_body = target_table.find('tbody')
+    rows = table_body.find_all('tr')
+    for row in rows:
+
+        # Extract data for each row
+        vals = []
+        nit_team = False
+        for value in row.find_all('td'):
+            
+            text = re.sub('[+]', '', value.text.strip())
+            vals.append(text)
+
+            # Check if the seed for this team is for the NIT instead of NCAA Tournament
+            span = value.find('span')
+            if span is not None and 'seed-nit' in str(span):
+                nit_team = True
+
+        # Make sure this is not a header row
+        if len(vals) > 5:
+
+            # Split W-L into two values
+            w_l = vals[3].split('-')
+            vals[3] = w_l[0]
+            vals.insert(4, w_l[1])
+
+            # Append the seed if it exists and is not for the NIT
+            seed = re.findall(r'[0-9]+', vals[1])
+            vals.insert(2, None)
+            if not nit_team and len(seed) > 0:
+                vals[2] = seed[0]
+
+            # Remove tournament seed from team name
+            vals[1] = re.sub(r'[0-9]+', '', vals[1]).strip()
+
+            data_array.append(vals)
+
+    # Create a dataframe
+    data_df = pd.DataFrame(data_array, columns=cols)
+
+    # Save the dataframe to csv if save_data is True
+    if csv_file_path is not None:
+        # Check if files exits
+        if os.path.exists(csv_file_path):
+            os.remove(csv_file_path)
+
+        data_df.to_csv(csv_file_path, index=False)
+
+    return data_df

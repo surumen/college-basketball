@@ -1,0 +1,12 @@
+beautifulsoup4
+cachetools
+lxml
+requests>=2.21.0
+pandas
+# dev
+blue
+flake8
+mypy
+pre-commit
+pytest
+pytest-cov
